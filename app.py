@@ -7,7 +7,7 @@ def main():
     st.title("Terraform HCL ➡️ tfvars Converter")
     st.markdown("""
     `terraform plan` 等で取得したリソースブロック（HCL形式）を入力すると、
-    公式ドキュメント（または静的リスト）から **Read-Only / Computed 属性** を判定・自動除外し、
+    公式ドキュメントから動的に **Read-Only / Computed 属性** を判定・自動除外し、
     `tfvars` 形式に変形して出力します。
     """)
     
