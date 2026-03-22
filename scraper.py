@@ -54,37 +54,58 @@ def get_readonly_attributes(resource_type: str) -> list[str]:
                 html_fetched = True
                 
                 in_readonly_section = False
+                current_schema_path = ""
+                current_section = "" # "Required", "Optional", "Read-Only"
                 
                 for line in lines:
                     stripped = line.strip()
                     lower_line = stripped.lower()
                     
-                    # 空行は状態を維持したままスキップ
                     if not stripped:
                         continue
-                        
-                    # セクションの終了判定：別の見出し(#)や、'Optional:' などのコロンで終わる行が来た場合
-                    if in_readonly_section:
-                        if stripped.startswith('#') or (stripped.endswith(':') and 'read-only' not in lower_line and 'computed' not in lower_line):
-                            in_readonly_section = False
                     
-                    # Read-Only セクションの開始を検知
-                    # パターン1: ### Read-Only
-                    # パターン2: Read-Only:
-                    clean_lower = lower_line.replace('*', '').replace('#', '').strip()
-                    if clean_lower == 'read-only' or clean_lower == 'read-only:' or clean_lower == 'computed' or clean_lower == 'computed:':
-                        in_readonly_section = True
+                    # 階層（Nested Schema）の検知
+                    schema_match = re.search(r'Nested Schema for `?([\w\.]+)`?', line)
+                    if schema_match:
+                        current_schema_path = schema_match.group(1)
+                        in_readonly_section = False
+                        current_section = ""
                         continue
+                    
+                    # セクション（Required/Optional/Read-Only）の検知
+                    if stripped.endswith(':') or stripped.startswith('### '):
+                        clean_header = stripped.replace('#', '').replace('*', '').strip().lower()
+                        if 'required' in clean_header:
+                            current_section = "Required"
+                            in_readonly_section = False
+                        elif 'optional' in clean_header:
+                            current_section = "Optional"
+                            in_readonly_section = False
+                        elif 'read-only' in clean_header or 'computed' in clean_header:
+                            current_section = "Read-Only"
+                            in_readonly_section = True
                     
                     if '`' in stripped:
                         match = re.search(r'`([a-zA-Z0-9_]+)`', stripped)
                         if match:
                             attr_name = match.group(1)
-                            # 行自体がread-onlyを含んでいるか、現在read-onlyセクションの中なら追加
-                            if 'read-only' in lower_line or 'computed' in lower_line or 'read only' in lower_line or in_readonly_section:
-                                read_only_attrs.add(attr_name)
+                            
+                            # 除外判定ルール:
+                            # 1. 明示的な 'Read-Only' または 'Computed' セクションにいる場合
+                            # 2. セクションが不明だが、説明文に 'read-only' 等が含まれる場合 (念のため残すが、Optional内は避ける)
+                            is_readonly = in_readonly_section
+                            
+                            if not is_readonly and current_section not in ["Optional", "Required"]:
+                                if 'read-only' in lower_line or 'computed' in lower_line or 'read only' in lower_line:
+                                    is_readonly = True
+                            
+                            if is_readonly:
+                                full_path = f"{current_schema_path}.{attr_name}" if current_schema_path else attr_name
+                                read_only_attrs.add(full_path)
+                                if not current_schema_path:
+                                    read_only_attrs.add(attr_name)
                                 
-                break # 取得に成功したら別ブランチは試さない
+                break 
         except Exception as e:
             print(f"URL {url} 取得エラー: {e}")
             pass

@@ -19,51 +19,70 @@ def convert_hcl_to_tfvars(hcl_content: str) -> tuple[str, dict[str, str]]:
     res_type = header_match.group(1)
     res_name = header_match.group(2)
     
-    # 2. 対象リソースの Read-Only 属性リストを取得
-    read_only_attrs = get_readonly_attributes(res_type)
+    # 2. 対象リソースの Read-Only 属性リストを取得 (フルパス形式: ['networks.attachments.display_name', ...])
+    read_only_attrs = set(get_readonly_attributes(res_type))
     excluded_found = {}
     
     # 3. 中身のプロパティ行を抽出
-    # ネストされたブロック（{}）内の詳細パースは今回簡易的にスキップし、トップレベルのキーバリューを解析します
     body_match = re.search(r'\{([\s\S]+)\}', hcl_content)
     if not body_match:
         return "エラー: リソースのボディが見つかりません。", []
     body = body_match.group(1)
     
     properties = []
+    path_stack = [] # 現在の階層を追跡
+    
     for line in body.split('\n'):
         stripped = line.strip()
         
         # コメント行や空行は無視
         if not stripped or stripped.startswith('#') or stripped.startswith('//'):
+            properties.append(line)
             continue
             
-        # key = value 形式の判定 (ブロックの開始ではないか確認)
+        # ブロックの終了判定
+        if stripped == '}' or stripped == '},' or stripped == '} }':
+            if path_stack:
+                path_stack.pop()
+            properties.append(line)
+            continue
+
+        # key = value 形式の判定
         if '=' in stripped and not stripped.endswith('{'):
             parts = stripped.split('=', 1)
-            key = parts[0].strip()
+            key = parts[0].strip().strip('"')
             val = parts[1].strip()
             
-            if key in read_only_attrs:
-                excluded_found[key] = val
+            # 現在のパスを構築 (引用符で囲まれた動的なキーはパスから除外してスキーマに合わせる)
+            # 例: networks."NET1".display_name -> networks.display_name
+            current_full_path = ".".join([p for p in path_stack if not (p.startswith('"') and p.endswith('"'))] + [key])
+            
+            if current_full_path in read_only_attrs or key in read_only_attrs:
+                excluded_found[current_full_path] = val
                 continue
                 
             properties.append(line)
             
-        # block { の判定
+        # block { or key = { の判定
         elif stripped.endswith('{'):
+            # キーの抽出
             block_key = stripped.replace('{', '').replace('=', '').strip()
-            if block_key in read_only_attrs:
-                excluded_found[block_key] = "{ ... }"
+            path_stack.append(block_key)
+            
+            # ブロック自体が除外対象かチェック
+            current_full_path = ".".join([p for p in path_stack if not (p.startswith('"') and p.endswith('"'))])
+            if current_full_path in read_only_attrs:
+                excluded_found[current_full_path] = "{ ... }"
+                path_stack.pop() # 除外するのでスタックからも戻す
                 continue
                 
             # "key {" を "key = {" に変換する
-            if '=' not in stripped:
+            if '=' not in stripped and not (stripped.startswith('"') and ':' not in stripped):
                 properties.append(line.replace('{', '= {'))
             else:
                 properties.append(line)
                 
-        # 閉じカッコなど
+        # その他（インデント維持など）
         else:
             properties.append(line)
     
@@ -71,9 +90,17 @@ def convert_hcl_to_tfvars(hcl_content: str) -> tuple[str, dict[str, str]]:
     output = []
     output.append(f"{res_type} = {{")
     output.append(f"  {res_name} = {{")
-    if properties:
-        for p in properties:
-            output.append("  " + p) # 元のインデントにもう一段階字下げを追加
+    
+    # 前後の空行をトリムして整形
+    trimmed_properties = properties
+    while trimmed_properties and not trimmed_properties[0].strip():
+        trimmed_properties.pop(0)
+    while trimmed_properties and not trimmed_properties[-1].strip():
+        trimmed_properties.pop()
+
+    if trimmed_properties:
+        for p in trimmed_properties:
+            output.append("  " + p) 
     output.append("  }")
     output.append("}")
     
