@@ -72,9 +72,11 @@ def get_readonly_attributes(resource_type: str) -> list[str]:
                         current_section = ""
                         continue
                     
-                    # セクション（Required/Optional/Read-Only）の検知
-                    if stripped.endswith(':') or stripped.startswith('### '):
+                    # セクション（Required/Optional/Read-Only）の検知 / 見出しによるリセット
+                    if stripped.startswith('#') or stripped.endswith(':'):
                         clean_header = stripped.replace('#', '').replace('*', '').strip().lower()
+                        
+                        # 明示的な属性セクションの開始
                         if 'required' in clean_header:
                             current_section = "Required"
                             in_readonly_section = False
@@ -84,6 +86,10 @@ def get_readonly_attributes(resource_type: str) -> list[str]:
                         elif 'read-only' in clean_header or 'computed' in clean_header:
                             current_section = "Read-Only"
                             in_readonly_section = True
+                        elif stripped.startswith('#'):
+                            # それ以外の見出し（## Template Parametersなど）が出現したら状態をリセット
+                            current_section = ""
+                            in_readonly_section = False
                     
                     if '`' in stripped:
                         match = re.search(r'`([a-zA-Z0-9_]+)`', stripped)
