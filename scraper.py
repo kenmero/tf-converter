@@ -1,6 +1,8 @@
 import requests
 import re
+import functools
 
+@functools.lru_cache(maxsize=32)
 def get_readonly_attributes(resource_type: str) -> list[str]:
     """
     Terraform Registry API を使用して対象リソースの正確なドキュメントパスを取得し、

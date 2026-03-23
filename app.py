@@ -12,6 +12,7 @@ def main():
     """)
     
     st.subheader("1. HCL を入力してください")
+    st.markdown("※ 複数のリソースをまとめてペーストしても変換可能です。")
     hcl_input = st.text_area(
         "リソースのコード (例: resource \"dcnm_interface\" \"name\" { ... })",
         height=300,
@@ -23,7 +24,7 @@ def main():
             st.warning("HCLコードが入力されていません。")
             return
             
-        with st.spinner("変換中... (Read-Only属性を探索しています)"):
+        with st.spinner("変換中... (複数リソースの探索とRead-Only属性の除外を行っています)"):
             tfvars_output, excluded_attrs = convert_hcl_to_tfvars(hcl_input)
             
         st.success("変換完了！")
@@ -35,7 +36,8 @@ def main():
             st.info("💡 以下の属性は Read-Only / Computed として自動的に除外されました:")
             import pandas as pd
             df = pd.DataFrame(list(excluded_attrs.items()), columns=["属性 (Key)", "値 (Value)"])
-            st.table(df)
+            # st.tableの場合、長いキーが画面幅などで見切れてしまうことがあるためインタラクティブな dataframe を使用します
+            st.dataframe(df, use_container_width=True)
         else:
             st.info("💡 除外された Read-Only 属性はありませんでした。")
 
