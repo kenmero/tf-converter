@@ -23,10 +23,40 @@ def extract_resource_blocks(hcl_content: str) -> list[tuple[str, str, str]]:
         end_index = start_index
         in_string = False
         escape_next = False
+        in_heredoc = False
+        heredoc_marker = ""
+        in_line_comment = False
+        in_block_comment = False
         
         while end_index < len(hcl_content) and brace_count > 0:
             char = hcl_content[end_index]
+            next_char = hcl_content[end_index+1] if end_index+1 < len(hcl_content) else ''
             
+            if in_line_comment:
+                if char == '\n':
+                    in_line_comment = False
+                end_index += 1
+                continue
+                
+            if in_block_comment:
+                if char == '*' and next_char == '/':
+                    in_block_comment = False
+                    end_index += 1 # skip '/'
+                end_index += 1
+                continue
+            
+            if in_heredoc:
+                if char == '\n':
+                    next_newline = hcl_content.find('\n', end_index + 1)
+                    if next_newline == -1:
+                        next_newline = len(hcl_content)
+                    line = hcl_content[end_index+1:next_newline]
+                    if line.strip() == heredoc_marker:
+                        in_heredoc = False
+                        end_index = next_newline - 1
+                end_index += 1
+                continue
+
             if escape_next:
                 escape_next = False
             elif char == '\\':
@@ -34,7 +64,22 @@ def extract_resource_blocks(hcl_content: str) -> list[tuple[str, str, str]]:
             elif char == '"':
                 in_string = not in_string
             elif not in_string:
-                if char == '{':
+                # コメントの開始判定
+                if char == '#':
+                    in_line_comment = True
+                elif char == '/' and next_char == '/':
+                    in_line_comment = True
+                    end_index += 1
+                elif char == '/' and next_char == '*':
+                    in_block_comment = True
+                    end_index += 1
+                elif char == '<' and next_char == '<':
+                    marker_match = re.match(r'<<-?([A-Za-z0-9_]+)', hcl_content[end_index:])
+                    if marker_match:
+                        in_heredoc = True
+                        heredoc_marker = marker_match.group(1)
+                        end_index += len(marker_match.group(0)) - 1
+                elif char == '{':
                     brace_count += 1
                 elif char == '}':
                     brace_count -= 1
@@ -76,8 +121,44 @@ def convert_hcl_to_tfvars(hcl_content: str) -> tuple[str, dict[str, str]]:
         properties = []
         path_stack = [] # 現在の階層を追跡
         
+        in_heredoc = False
+        exclude_current_heredoc = False
+        heredoc_marker = ""
+        
         for line in body.split('\n'):
             stripped = line.strip()
+            
+            # Heredoc中（通常 or 除外中）の処理
+            if in_heredoc:
+                if not exclude_current_heredoc:
+                    properties.append(line)
+                if stripped == heredoc_marker:
+                    in_heredoc = False
+                    exclude_current_heredoc = False
+                continue
+            
+            # Heredocの開始チェック
+            heredoc_match = re.search(r'<<-?([A-Za-z0-9_]+)', stripped)
+            if heredoc_match:
+                heredoc_marker = heredoc_match.group(1)
+                
+                # キーの抽出ができれば除外判定を行う (key = <<-EOT)
+                if '=' in stripped:
+                    parts = stripped.split('=', 1)
+                    key = parts[0].strip().strip('"')
+                    current_full_path = ".".join([p for p in path_stack if not (p.startswith('"') and p.endswith('"'))] + [key])
+                    
+                    if current_full_path in read_only_attrs or key in read_only_attrs:
+                        # 除外対象のHeredocは中身含めて出力しない
+                        excluded_found[f"{res_type}.{res_name}.{current_full_path}"] = "<<-Heredoc Content>>"
+                        in_heredoc = True
+                        exclude_current_heredoc = True
+                        continue
+                
+                in_heredoc = True
+                exclude_current_heredoc = False
+                properties.append(line)
+                continue
             
             # コメント行や空行は無視
             if not stripped or stripped.startswith('#') or stripped.startswith('//'):
