@@ -201,7 +201,7 @@ def convert_hcl_to_tfvars(hcl_content: str) -> tuple[str, dict[str, str]]:
                     continue
                     
                 # "key {" を "key = {" に変換する
-                if '=' not in stripped and not (stripped.startswith('"') and ':' not in stripped):
+                if block_key and '=' not in stripped and not (stripped.startswith('"') and ':' not in stripped) and not any(c in block_key for c in "[]()"):
                     properties.append(line.replace('{', '= {'))
                 else:
                     properties.append(line)
